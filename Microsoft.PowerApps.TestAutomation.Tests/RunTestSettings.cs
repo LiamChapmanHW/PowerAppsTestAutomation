@@ -29,7 +29,8 @@ namespace Microsoft.PowerApps.TestAutomation.Tests
         public static BrowserOptions Options = new BrowserOptions
         {
             BrowserType = Type,
-            PrivateMode = UsePrivateMode ?? true,
+            PrivateMode = false,
+            //PrivateMode = UsePrivateMode ?? true,
             FireEvents = false,
             Headless = false,
             UserAgent = false,
