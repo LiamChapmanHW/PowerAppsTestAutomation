@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT license.
 
 using Microsoft.PowerApps.TestAutomation.Browser;
@@ -9,11 +9,13 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using OpenQA.Selenium;
+using System.Data.SqlClient;
+using System.Threading;
 
 namespace Microsoft.PowerApps.TestAutomation.Tests
 {
     [TestClass]
-    public class TestAutomation
+    public class Proposal
     {
         private static string _username = "";
         private static string _password = "";
@@ -31,7 +33,6 @@ namespace Microsoft.PowerApps.TestAutomation.Tests
         private static int _testMaxWaitTimeInSeconds = 600;
 
         public TestContext TestContext { get; set; }
-
         private static TestContext _testContext;
 
         [ClassInitialize]
@@ -54,173 +55,311 @@ namespace Microsoft.PowerApps.TestAutomation.Tests
         [TestCategory("PowerAppsTestAutomation")]
         [Priority(1)]
         [TestMethod]
-        public void RunTestAutomation()
+        public void Test1_Create_New_Proposal()
         {
             BrowserOptions options = RunTestSettings.Options;
             options.BrowserType = _browserType;
             options.DriversPath = _driversPath;
+            
+            var ProgrammeCountBefore = ExcecuteSQLCommand("SELECT COUNT(programme_id) AS row_count FROM [dbo].programmes");
+            Console.WriteLine("Starting No. of Programmes:");
+            Console.WriteLine(ProgrammeCountBefore);
 
             using (var appBrowser = new PowerAppBrowser(options))
             {
-                // Track current test iteration
-                int testRunCounter = 0;
-                // Track list of  Test Automation URLs
-                var testUrlList = appBrowser.TestAutomation.GetTestURLs(_testAutomationURLFilePath);
-                // Track total number of TestURLs
-                int testUrlCount = testUrlList.Value.Count();
-
-                foreach (Uri testUrl in testUrlList?.Value)
-                {
-                    // Test URL
-                    _testAutomationUri = testUrl;
-                    testRunCounter += 1;
-
-                    try
-                    {
-                        // if TestCounter > 1, authentication not required
-                        if (testRunCounter <= 1)
-                        {
-                            //Login To PowerApps
-                            Debug.WriteLine($"Attempting to authenticate to Maker Portal: {_xrmUri}");
-
-                            for (int retryCount = 0; retryCount < Reference.Login.SignInAttempts; retryCount++)
-                            {
-                                try
-                                {
-                                    // See Authentication Types: https://docs.microsoft.com/en-us/office365/servicedescriptions/office-365-platform-service-description/user-account-management#authentication
-                                    // CloudIdentity uses standard Office 365 sign-in service
-                                    if (_loginMethod == "CloudIdentity")
-                                    {
-                                        appBrowser.OnlineLogin.Login(_xrmUri, _username.ToSecureString(), _password.ToSecureString());
-                                        break;
-                                    }
-                                    // FederatedIdentity uses AD FS 2.0 or other Security Token Services
-                                    else if (_loginMethod == "FederatedIdentity")
-                                    {
-                                        // Do Federated Login
-                                        appBrowser.OnlineLogin.Login(_xrmUri, _username.ToSecureString(), _password.ToSecureString(), FederatedLoginAction);
-                                        break;
-                                    }
-                                    // FederatedIdentity scenario -- but DevOps agent is configured with SSO capability
-                                    else if (_loginMethod == "PassThrough")
-                                    {
-                                        appBrowser.OnlineLogin.Login(_xrmUri);
-                                        break;
-                                    }
-                                    // Fallback to CloudIdentity experience if _loginMethod is not provided
-                                    else
-                                    {
-                                        appBrowser.OnlineLogin.Login(_xrmUri, _username.ToSecureString(), _password.ToSecureString());
-                                        break;
-                                    }
-
-                                }
-                                catch (Exception exc)
-                                {
-                                    Console.WriteLine($"Exception on Attempt #{retryCount + 1}: {exc}");
-
-                                    if (retryCount + 1 == Reference.Login.SignInAttempts)
-                                    {
-                                        // Login exception occurred, take screenshot
-                                        _resultsDirectory = TestContext.TestResultsDirectory;
-                                        string location = $@"{_resultsDirectory}\RunTestAutomation-LoginErrorAttempt{retryCount + 1}.jpeg";
-
-                                        appBrowser.TakeWindowScreenShot(location, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
-                                        _testContext.AddResultFile(location);
-
-                                        // Max Sign-In Attempts reached
-                                        Console.WriteLine($"Login failed after {retryCount + 1} attempts.");
-                                        throw new InvalidOperationException($"Login failed after {retryCount + 1} attempts. Exception Details: {exc}");
-                                    }
-                                    else
-                                    {
-                                        // Login exception occurred, take screenshot
-                                        _resultsDirectory = TestContext.TestResultsDirectory;
-                                        string location = $@"{_resultsDirectory}\RunTestAutomation-LoginErrorAttempt{retryCount + 1}.jpeg";
-
-                                        appBrowser.TakeWindowScreenShot(location, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
-                                        _testContext.AddResultFile(location);
-
-                                        //Navigate away and retry
-                                        appBrowser.Navigate("about:blank");
-
-                                        Console.WriteLine($"Login failed after attempt #{retryCount + 1}.");
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-
-                        Console.WriteLine($"Power Apps  Test Automation Execution Starting Test #{testRunCounter} of {testUrlCount}");
-
-                        // Initialize TestFrameworok results JSON object
-                        JObject testAutomationResults = new JObject();
-
-                        // Execute TestAutomation and return JSON result object
-                        testAutomationResults = appBrowser.TestAutomation.ExecuteTestAutomation(_testAutomationUri, testRunCounter, _testMaxWaitTimeInSeconds);
-
-                        #if DEBUG    
-                        // Only output post execution screenshot in debug mode
-                        _resultsDirectory = TestContext.TestResultsDirectory;
-                        string location1 = $@"{_resultsDirectory}\TestRun{testRunCounter}-PostExecutionScreenshot.jpeg";
-                        appBrowser.TakeWindowScreenShot(location1, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
-                        _testContext.AddResultFile(location1);
-                        #endif
-
-                        // Report Results to DevOps Pipeline                    
-                        var testResultCount = appBrowser.TestAutomation.ReportResultsToDevOps(testAutomationResults, testRunCounter);
-
-                        _globalPassCount += testResultCount.Item1;
-                        _globalFailCount += testResultCount.Item2;
-                        _globalTestCount += (testResultCount.Item1 + testResultCount.Item2);
-
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine($"An error occurred during Test Run #{testRunCounter} of {testUrlCount}: {e}");
-
-                        _resultsDirectory = TestContext.TestResultsDirectory;
-                        Console.WriteLine($"Current results directory location: {_resultsDirectory}");
-                        string location = $@"{_resultsDirectory}\TestRun{testRunCounter}-GenericError.jpeg";
-
-                        appBrowser.TakeWindowScreenShot(location, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
-                        _testContext.AddResultFile(location);
-
-                        throw;
-                    }
-
-                    Console.WriteLine($"Power Apps  Test Automation Execution Completed for Test Run #{testRunCounter} of {testUrlCount}." + "\n");
-                }
-
+                RunTest(appBrowser, 0);
                 
+                var ProgrammeCountAfter = ExcecuteSQLCommand("SELECT COUNT(programme_id) AS row_count FROM [dbo].programmes");
+                Console.WriteLine("Final No. of Programmes:");
+                Console.WriteLine(ProgrammeCountAfter);
+
                 if (_globalPassCount > 0 && _globalFailCount > 0)
                 {
-                    string message = ("\n" 
+                    string message = ("\n"
                         + "Inconclusive Test Automation Result: " + "\n"
                         + $"Total Test Count: {_globalTestCount}" + "\n"
-                        + $"Total Pass Count: {_globalPassCount}" + "\n" 
-                        + $"Total Fail Count: {_globalFailCount}" + "\n" 
+                        + $"Total Pass Count: {_globalPassCount}" + "\n"
+                        + $"Total Fail Count: {_globalFailCount}" + "\n"
                         + "Please see the console log for more information.");
                     Assert.Fail(message);
                 }
                 else if (_globalFailCount > 0)
                 {
-                    string message = ("\n" 
-                        + "Test Failed: " + "\n" 
-                        + $"Total Fail Count: {_globalFailCount}" + "\n" 
+                    string message = ("\n"
+                        + "Test Failed: " + "\n"
+                        + $"Total Fail Count: {_globalFailCount}" + "\n"
+                        + "Please see the console log for more information.");
+                    Assert.Fail(message);
+                }
+                else if (Int32.Parse(ProgrammeCountBefore) >= Int32.Parse(ProgrammeCountAfter))
+                {
+                    string message = ("\n"
+                            + "Test Failed: " + "\n"
+                            + $"Total Fail Count: {_globalFailCount}" + "\n"
+                            + "New event not created in DB");
+                    Assert.Fail(message);
+                }
+                else if (_globalPassCount > 0)
+                {
+                    var success = true;
+                    string message = ("\n"
+                        + "Success: " + "\n"
+                        + $"Total Pass Count: {_globalPassCount}");
+                    Assert.IsTrue(success, message);
+
+                }
+                
+            }
+        }
+
+        [TestCategory("PowerAppsTestAutomation")]
+        [Priority(1)]
+        [TestMethod]
+        public void Test2_Complete_A2()
+        {
+            BrowserOptions options = RunTestSettings.Options;
+            options.BrowserType = _browserType;
+            options.DriversPath = _driversPath;
+            using (var appBrowser = new PowerAppBrowser(options))
+            {
+                Debug.WriteLine("Test Started");
+                RunTest(appBrowser, 1);
+                Debug.WriteLine("UI Test Ran");
+                Debug.WriteLine("Pass Count:" + _globalPassCount);
+                Debug.WriteLine("Fail Count:" + _globalFailCount);
+                if (_globalPassCount > 0 && _globalFailCount > 0)
+                {
+                    string message = ("\n"
+                        + "Inconclusive Test Automation Result: " + "\n"
+                        + $"Total Test Count: {_globalTestCount}" + "\n"
+                        + $"Total Pass Count: {_globalPassCount}" + "\n"
+                        + $"Total Fail Count: {_globalFailCount}" + "\n"
+                        + "Please see the console log for more information.");
+                    Assert.Fail(message);
+                }
+                else if (_globalFailCount > 0)
+                {
+                    string message = ("\n"
+                        + "Test Failed: " + "\n"
+                        + $"Total Fail Count: {_globalFailCount}" + "\n"
+                        + "Please see the console log for more information.");
+                    Assert.Fail(message);
+                } else if (_globalPassCount > 0)
+                {
+                    var EventInstanceStatus = ExcecuteSQLCommand("SELECT top 1 processing_status FROM [dbo].event_instances WHERE event_key = 'complete-the-a2-form' order by created_on desc").Replace("\n", "").Replace("\r", "");
+                    Stopwatch stopWatch = new Stopwatch();
+                    stopWatch.Start();
+                    while (EventInstanceStatus != "complete"  && stopWatch.ElapsedMilliseconds <= 900000)
+                    {
+                        EventInstanceStatus = ExcecuteSQLCommand("SELECT top 1 processing_status FROM [dbo].event_instances WHERE event_key = 'complete-the-a2-form' order by created_on desc").Replace("\n", "").Replace("\r", "");
+                        Debug.WriteLine("'" + EventInstanceStatus + "'");
+                        Thread.Sleep(10000);
+                    }
+                    if (EventInstanceStatus == "complete")
+                    {
+                        var success = true;
+                        string message = ("\nSuccess: \n" + $"Total Pass Count: {_globalPassCount}");
+                        Assert.IsTrue(success, message);
+                    }
+                    else
+                    {
+                        string message = ("\nTest Failed: " + "\n" + $"Total Fail Count: {_globalFailCount}" + "\nEvent creation timed out - Please see the console log for more information.");
+                        Assert.Fail(message);
+                    }
+                }
+
+            }
+        }
+
+        [TestCategory("PowerAppsTestAutomation")]
+        [Priority(1)]
+        [TestMethod]
+        public void Test3_Complete_Desiscion()
+        {
+            BrowserOptions options = RunTestSettings.Options;
+            options.BrowserType = _browserType;
+            options.DriversPath = _driversPath;
+            using (var appBrowser = new PowerAppBrowser(options))
+            {
+                RunTest(appBrowser, 2);
+
+                if (_globalPassCount > 0 && _globalFailCount > 0)
+                {
+                    string message = ("\n"
+                        + "Inconclusive Test Automation Result: " + "\n"
+                        + $"Total Test Count: {_globalTestCount}" + "\n"
+                        + $"Total Pass Count: {_globalPassCount}" + "\n"
+                        + $"Total Fail Count: {_globalFailCount}" + "\n"
+                        + "Please see the console log for more information.");
+                    Assert.Fail(message);
+                }
+                else if (_globalFailCount > 0)
+                {
+                    string message = ("\n"
+                        + "Test Failed: " + "\n"
+                        + $"Total Fail Count: {_globalFailCount}" + "\n"
                         + "Please see the console log for more information.");
                     Assert.Fail(message);
                 }
                 else if (_globalPassCount > 0)
                 {
                     var success = true;
-                    string message = ("\n" 
-                        + "Success: " + "\n" 
+                    string message = ("\n"
+                        + "Success: " + "\n"
                         + $"Total Pass Count: {_globalPassCount}");
                     Assert.IsTrue(success, message);
+
+
                 }
-                
             }
+        }
+
+        public String ExcecuteSQLCommand(String SQLCommand)
+        {
+            var SQLResponse = "";
+            using (SqlConnection connection = new SqlConnection("Data Source=kingston-uni-curriculummgn-srv.database.windows.net;Initial Catalog=curriculum-management;Persist Security Info=True;User ID=dbadmin;Password=M3atB4ll5."))
+            using (SqlCommand cmd = new SqlCommand(SQLCommand, connection))
+            {
+               connection.Open();
+               using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        for (int i = 0; i < reader.FieldCount; i++)
+                        {
+                            SQLResponse += reader.GetValue(i) + "\n";
+                        }
+                    }
+                }
+            }
+            return SQLResponse;
+        }
+
+        public void RunTest(PowerAppBrowser appBrowser, int testRunCounter)
+        {
+            _globalPassCount = 0;
+            _globalFailCount = 0;
+            // Track list of  Test Automation URLs
+            var testUrlList = appBrowser.TestAutomation.GetTestURLs(_testAutomationURLFilePath);
+            // Track total number of TestURLs
+            int testUrlCount = testUrlList.Value.Count();
+
+            _testAutomationUri = testUrlList.Value[testRunCounter];
+
+                try
+                {
+                    
+                        //Login To PowerApps
+                        Debug.WriteLine($"Attempting to authenticate to Maker Portal: {_xrmUri}");
+
+                        for (int retryCount = 0; retryCount < Reference.Login.SignInAttempts; retryCount++)
+                        {
+                            try
+                            {
+                                // See Authentication Types: https://docs.microsoft.com/en-us/office365/servicedescriptions/office-365-platform-service-description/user-account-management#authentication
+                                // CloudIdentity uses standard Office 365 sign-in service
+                                if (_loginMethod == "CloudIdentity")
+                                {
+                                    appBrowser.OnlineLogin.Login(_xrmUri, _username.ToSecureString(), _password.ToSecureString());
+                                    break;
+                                }
+                                // FederatedIdentity uses AD FS 2.0 or other Security Token Services
+                                else if (_loginMethod == "FederatedIdentity")
+                                {
+                                    // Do Federated Login
+                                    appBrowser.OnlineLogin.Login(_xrmUri, _username.ToSecureString(), _password.ToSecureString(), FederatedLoginAction);
+                                    break;
+                                }
+                                // FederatedIdentity scenario -- but DevOps agent is configured with SSO capability
+                                else if (_loginMethod == "PassThrough")
+                                {
+                                    appBrowser.OnlineLogin.Login(_xrmUri);
+                                    break;
+                                }
+                                // Fallback to CloudIdentity experience if _loginMethod is not provided
+                                else
+                                {
+                                    appBrowser.OnlineLogin.Login(_xrmUri, _username.ToSecureString(), _password.ToSecureString());
+                                    break;
+                                }
+
+                            }
+                            catch (Exception exc)
+                            {
+                                Console.WriteLine($"Exception on Attempt #{retryCount + 1}: {exc}");
+
+                                if (retryCount + 1 == Reference.Login.SignInAttempts)
+                                {
+                                    // Login exception occurred, take screenshot
+                                    _resultsDirectory = TestContext.TestResultsDirectory;
+                                    string location = $@"{_resultsDirectory}\RunTestAutomation-LoginErrorAttempt{retryCount + 1}.jpeg";
+
+                                    appBrowser.TakeWindowScreenShot(location, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
+                                    _testContext.AddResultFile(location);
+
+                                    // Max Sign-In Attempts reached
+                                    Console.WriteLine($"Login failed after {retryCount + 1} attempts.");
+                                    throw new InvalidOperationException($"Login failed after {retryCount + 1} attempts. Exception Details: {exc}");
+                                }
+                                else
+                                {
+                                    // Login exception occurred, take screenshot
+                                    _resultsDirectory = TestContext.TestResultsDirectory;
+                                    string location = $@"{_resultsDirectory}\RunTestAutomation-LoginErrorAttempt{retryCount + 1}.jpeg";
+
+                                    appBrowser.TakeWindowScreenShot(location, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
+                                    _testContext.AddResultFile(location);
+
+                                    //Navigate away and retry
+                                    appBrowser.Navigate("about:blank");
+
+                                    Console.WriteLine($"Login failed after attempt #{retryCount + 1}.");
+                                    continue;
+                                }
+                            }
+                        }
+
+                    Console.WriteLine($"Power Apps  Test Automation Execution Starting Test #{testRunCounter} of {testUrlCount}");
+
+                    // Initialize TestFrameworok results JSON object
+                    JObject testAutomationResults = new JObject();
+
+                    // Execute TestAutomation and return JSON result object
+                    testAutomationResults = appBrowser.TestAutomation.ExecuteTestAutomation(_testAutomationUri, testRunCounter, _testMaxWaitTimeInSeconds);
+
+#if DEBUG
+                    // Only output post execution screenshot in debug mode
+                    _resultsDirectory = TestContext.TestResultsDirectory;
+                    string location1 = $@"{_resultsDirectory}\TestRun{testRunCounter}-PostExecutionScreenshot.jpeg";
+                    appBrowser.TakeWindowScreenShot(location1, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
+                    _testContext.AddResultFile(location1);
+#endif
+
+                    // Report Results to DevOps Pipeline                    
+                    var testResultCount = appBrowser.TestAutomation.ReportResultsToDevOps(testAutomationResults, testRunCounter);
+
+                    _globalPassCount += testResultCount.Item1;
+                    _globalFailCount += testResultCount.Item2;
+                    _globalTestCount += (testResultCount.Item1 + testResultCount.Item2);
+
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine($"An error occurred during Test Run #{testRunCounter} of {testUrlCount}: {e}");
+
+                    _resultsDirectory = TestContext.TestResultsDirectory;
+                    Console.WriteLine($"Current results directory location: {_resultsDirectory}");
+                    string location = $@"{_resultsDirectory}\TestRun{testRunCounter}-GenericError.jpeg";
+
+                    appBrowser.TakeWindowScreenShot(location, OpenQA.Selenium.ScreenshotImageFormat.Jpeg);
+                    _testContext.AddResultFile(location);
+
+                    throw;
+                }
+
+                Console.WriteLine($"Power Apps  Test Automation Execution Completed for Test Run #{testRunCounter} of {testUrlCount}." + "\n");
+           
+
         }
 
         public void FederatedLoginAction(LoginRedirectEventArgs args)
